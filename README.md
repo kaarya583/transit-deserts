@@ -1,6 +1,7 @@
 # Transit Deserts
 
 This project measures transit accessibility inequities in Los Angeles using GTFS, census, and jobs data.
+
 ## Folder Layout
 ```
 transit-deserts/
