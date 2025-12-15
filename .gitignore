@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data (do not commit raw or intermediate files)
+data_raw/**
+outputs/**
+!outputs/.gitkeep
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+*.tmp
+*.temp
+tmp/
