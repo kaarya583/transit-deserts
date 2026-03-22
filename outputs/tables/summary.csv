@@ -1,0 +1,2 @@
+tracts,stops_used,total_jobs_in_model,mean_accessibility_jobs,median_accessibility_jobs,desert_tracts_pct,time_threshold_min,moran_I,moran_p
+2498,12164,4478164.0,290721.20696557243,186304.5,23.058446757405925,30,0.9085776364435806,0.01

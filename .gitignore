@@ -1,41 +1,32 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
 .Python
-
-# Virtual environments
+.venv/
 venv/
 env/
-ENV/
-.venv
 
-# Jupyter notebooks
+# Jupyter
 .ipynb_checkpoints/
 
-# IDE/editor files
+# IDE
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
+.DS_Store
 
-# Data (do not commit raw or intermediate files)
+# Data (large / local)
 data_raw/**
-outputs/**
-!outputs/.gitkeep
+!data_raw/README.md
+data_processed/**
+data_intermediate/**
 
-# Environment variables
+# Cache
+cache/
+
+# Env
 .env
 .env.local
 
-# OS files
-.DS_Store
-Thumbs.db
-
-# Logs & temp
+# Logs
 *.log
-*.tmp
-*.temp
-tmp/
