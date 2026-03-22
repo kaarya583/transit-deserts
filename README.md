@@ -26,14 +26,9 @@ transit-deserts/
 7. `06_visualization.ipynb` – create final charts/maps (optional lightweight dashboard).
 8. `07_reporting.ipynb` – assemble policy brief tables and narrative.
 
-## Data You Need
+## Data
 - GTFS: LA Metro bus & rail zips.
 - Census: tract shapefile plus ACS 5-year tables (income, cars, population, commute).
 - Jobs: LEHD LODES workplace area characteristics.
 
 Place every downloaded file inside `data_raw/`. Large files stay out of git thanks to `.gitignore`.
-
-## Tips
-- Keep markdown notes in each notebook describing assumptions.
-- Use `outputs/` for intermediate exports (e.g., `outputs/accessibility_tracts.parquet`).
-- When Overpass (OSM) times out, rerun with a smaller bounding box or try later.
