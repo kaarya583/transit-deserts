@@ -465,3 +465,106 @@ def figure_corridor_results_table(
     plt.tight_layout(rect=[0, 0, 1, 0.94])
     plt.savefig(path, facecolor="white")
     plt.close()
+
+
+def figure_dline_network_impact(
+    G_before: nx.Graph,
+    G_after: nx.Graph,
+    station_nodes_before: pd.DataFrame,
+    station_nodes_after: pd.DataFrame,
+    ext_edges: pd.DataFrame,
+    impact_summary: dict,
+    path,
+):
+    setup_style()
+    pos_b = station_nodes_before.set_index("node_id")[["lon", "lat"]].to_dict("index")
+    pos_a = station_nodes_after.set_index("node_id")[["lon", "lat"]].to_dict("index")
+    fig, axes = plt.subplots(1, 2, figsize=(15.8, 7.8), gridspec_kw={"wspace": 0.08})
+    for ax in axes:
+        ax.set_facecolor("#f8fafc")
+        ax.axis("off")
+        _extent(ax)
+    for u, v in list(G_before.edges()):
+        if u in pos_b and v in pos_b:
+            axes[0].plot(
+                [pos_b[u]["lon"], pos_b[v]["lon"]],
+                [pos_b[u]["lat"], pos_b[v]["lat"]],
+                color="#94a3b8",
+                linewidth=1.0,
+                alpha=0.55,
+                zorder=1,
+            )
+    for u, v in list(G_after.edges()):
+        if u in pos_a and v in pos_a:
+            axes[1].plot(
+                [pos_a[u]["lon"], pos_a[v]["lon"]],
+                [pos_a[u]["lat"], pos_a[v]["lat"]],
+                color="#94a3b8",
+                linewidth=1.0,
+                alpha=0.4,
+                zorder=1,
+            )
+    if ext_edges is not None and len(ext_edges) > 0:
+        for _, r in ext_edges.iterrows():
+            c = "#be123c" if str(r.get("kind", "")) == "extension" else "#f97316"
+            lw = 4.2 if str(r.get("kind", "")) == "extension" else 2.2
+            axes[1].plot(
+                [float(r["lon_u"]), float(r["lon_v"])],
+                [float(r["lat_u"]), float(r["lat_v"])],
+                color=c,
+                linewidth=lw,
+                alpha=0.95,
+                zorder=3,
+                solid_capstyle="round",
+            )
+    axes[0].set_title("Baseline rail graph", fontsize=12, fontweight="600")
+    axes[1].set_title("With D Line extension scenario", fontsize=12, fontweight="600")
+    if impact_summary:
+        txt = (
+            f"Compared pairs: {impact_summary.get('pair_count', 0)}\n"
+            f"Mean R_eff change: {impact_summary.get('mean_r_eff_pct_change', np.nan):.2f}%\n"
+            f"Median R_eff change: {impact_summary.get('median_r_eff_pct_change', np.nan):.2f}%\n"
+            f"Mean shortest-path change: {impact_summary.get('mean_sp_pct_change', np.nan):.2f}%"
+        )
+        axes[1].text(
+            0.02,
+            0.03,
+            txt,
+            transform=axes[1].transAxes,
+            fontsize=9.5,
+            ha="left",
+            va="bottom",
+            bbox=dict(facecolor="white", edgecolor="#cbd5e1", alpha=0.97, boxstyle="round,pad=0.45"),
+        )
+    fig.suptitle("Project 28 D Line extension: network-level impact", fontsize=14, fontweight="700", y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.savefig(path, facecolor="white")
+    plt.close()
+
+
+def figure_dline_top_pair_gains(pair_df: pd.DataFrame, station_nodes: pd.DataFrame, path, top_n: int = 10):
+    if pair_df is None or len(pair_df) == 0:
+        return
+    setup_style()
+    name_by = station_nodes.set_index("node_id")["stop_name"].to_dict()
+    best = pair_df.nsmallest(top_n, "r_eff_pct_change").copy().reset_index(drop=True)
+    labels = []
+    for _, r in best.iterrows():
+        a = _stop_display_name(str(r["station_a"]), name_by, max_len=20)
+        b = _stop_display_name(str(r["station_b"]), name_by, max_len=20)
+        labels.append(f"{a} -> {b}")
+    y = np.arange(len(best))[::-1]
+    vals = best["r_eff_pct_change"].values.astype(float)
+    fig, ax = plt.subplots(figsize=(12.2, max(5.2, 0.48 * len(best) + 2.0)))
+    ax.barh(y, vals, color="#be123c", alpha=0.9, edgecolor="white", linewidth=0.6)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.axvline(0, color="#334155", linewidth=1.0)
+    ax.set_xlabel("Effective resistance % change after extension (negative = improvement)")
+    ax.set_title("OD pairs with largest connectivity gains from D Line extension", fontsize=12, fontweight="600")
+    ax.grid(True, axis="x", alpha=0.3, linestyle="--", linewidth=0.6)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(path, facecolor="white")
+    plt.close()

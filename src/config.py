@@ -32,3 +32,12 @@ CORRIDOR_BUFFER_M = 800.0
 CORRIDOR_VIZ_TOP_N = 8
 CORRIDOR_REPORT_TOP_N = 5
 TRANSFER_EDGE_M = 150.0
+
+DLINE_STOPS_CSV_CANDIDATES = (
+    ROOT / "data_raw" / "project28_dline_stations.csv",
+    Path("/Users/aaryakhanna/project28_metro/data/project28_dline_stations.csv"),
+)
+DLINE_CONNECT_MAX_M = 3500.0
+DLINE_COMPARE_TOP_STATIONS = 28
+DLINE_COMPARE_MAX_PAIRS = 260
+DLINE_TOP_PAIR_BARS = 10

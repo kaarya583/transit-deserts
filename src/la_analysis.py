@@ -18,6 +18,14 @@ import transport_graph
 import viz_la
 
 
+def _resolve_dline_csv():
+    for p in getattr(config, "DLINE_STOPS_CSV_CANDIDATES", ()):
+        pp = p if hasattr(p, "exists") else None
+        if pp is not None and pp.exists():
+            return pp
+    return None
+
+
 def _load_tracts() -> gpd.GeoDataFrame:
     shp = list(config.DATA_RAW.glob("tl_*.shp"))
     if not shp:
@@ -143,7 +151,10 @@ def run_pipeline():
 
     out_geo = config.DATA_PROCESSED / "la_tract_accessibility.geojson"
     gdf.to_file(out_geo, driver="GeoJSON")
-    gdf.to_parquet(config.DATA_PROCESSED / "la_tract_accessibility.parquet")
+    try:
+        gdf.to_parquet(config.DATA_PROCESSED / "la_tract_accessibility.parquet")
+    except Exception:
+        pass
 
     summary = {
         "tracts": len(gdf),
@@ -197,6 +208,58 @@ def run_pipeline():
         viz_la.figure_corridor_metrics(cors, config.FIGURES / "05_corridor_impact_metrics.png")
         viz_la.figure_corridors_on_deserts(gdf, cors, config.FIGURES / "06_corridors_on_deserts.png")
         viz_la.figure_corridor_results_table(cors, station_nodes, config.FIGURES / "07_corridor_results_table.png")
+
+    dline_csv = _resolve_dline_csv()
+    if dline_csv is not None:
+        ext = transport_graph.load_dline_extension_stops(dline_csv)
+        if len(ext) >= 2:
+            G_d, station_nodes_d, ext_edges = transport_graph.add_dline_extension_to_graph(
+                G,
+                station_nodes,
+                ext,
+                connect_max_m=float(getattr(config, "DLINE_CONNECT_MAX_M", 3500.0)),
+            )
+            stations_w_d = transport_graph.station_buffer_weights(gdf, station_nodes_d, buffer_m=config.STATION_BUFFER_M)
+            stations_w_d = stations_w_d[stations_w_d["node_id"].isin(G_d.nodes)].copy()
+            focus = (
+                stations_w[stations_w["node_id"].isin(G.nodes)]
+                .nlargest(int(getattr(config, "DLINE_COMPARE_TOP_STATIONS", 28)), "weight")["node_id"]
+                .tolist()
+            )
+            dsum, dcmp = transport_graph.compare_effective_resistance(
+                G,
+                G_d,
+                focus_nodes=focus,
+                max_pairs=int(getattr(config, "DLINE_COMPARE_MAX_PAIRS", 260)),
+            )
+            if dsum:
+                summary["dline_compare_pairs"] = dsum["pair_count"]
+                summary["dline_mean_r_eff_pct_change"] = dsum["mean_r_eff_pct_change"]
+                summary["dline_median_r_eff_pct_change"] = dsum["median_r_eff_pct_change"]
+                summary["dline_mean_shortest_path_pct_change"] = dsum["mean_sp_pct_change"]
+                summary["dline_extension_nodes_added"] = int(len([n for n in G_d.nodes if str(n).startswith("dline_ext::")]))
+                summary["dline_graph_nodes_after"] = int(G_d.number_of_nodes())
+                summary["dline_graph_edges_after"] = int(G_d.number_of_edges())
+            if len(dcmp) > 0:
+                dcmp.to_csv(config.TABLES / "dline_extension_pair_impacts.csv", index=False)
+                dcmp.head(int(getattr(config, "DLINE_TOP_PAIR_BARS", 10))).to_csv(
+                    config.TABLES / "dline_extension_top_gains.csv", index=False
+                )
+            viz_la.figure_dline_network_impact(
+                G,
+                G_d,
+                station_nodes[station_nodes["node_id"].isin(G.nodes)].copy(),
+                station_nodes_d[station_nodes_d["node_id"].isin(G_d.nodes)].copy(),
+                ext_edges,
+                dsum,
+                config.FIGURES / "08_dline_extension_network_impact.png",
+            )
+            viz_la.figure_dline_top_pair_gains(
+                dcmp,
+                station_nodes_d,
+                config.FIGURES / "09_dline_extension_top_pair_gains.png",
+                top_n=int(getattr(config, "DLINE_TOP_PAIR_BARS", 10)),
+            )
 
     pd.DataFrame([summary]).to_csv(config.TABLES / "summary.csv", index=False)
 

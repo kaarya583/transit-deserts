@@ -20,6 +20,8 @@ Higher \(R_{\mathrm{eff}}\) means the pair is **more weakly connected** on today
 
 Buffer tract stats (mean accessibility, % deserts) are still saved in the CSV for context but **not** multiplied into the score.
 
-**Outputs:** `corridor_priorities.csv`; figures `01`–`07` (including desert overlay + results table for top corridors).
+**D Line extension scenario:** Add provided Project 28 extension stops as a new chain of graph nodes, connect consecutive extension stops, and attach terminal extension stops to nearest existing rail nodes (distance-capped). Compare baseline vs extension on the same focus node set using pairwise \(R_{\mathrm{eff}}\) and weighted shortest-path distance.
+
+**Outputs:** `corridor_priorities.csv`, `dline_extension_pair_impacts.csv`, `dline_extension_top_gains.csv`; figures `01`–`09` (including extension impact visuals).
 
 Planning analysis, not engineering design or ridership forecasting.

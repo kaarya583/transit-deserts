@@ -5,6 +5,7 @@ GTFS rail graph, Laplacian-based effective resistance, station demand buffers, c
 from __future__ import annotations
 
 import zipfile
+from itertools import combinations
 from pathlib import Path
 
 import geopandas as gpd
@@ -410,3 +411,147 @@ def summarize_graph(G: nx.Graph) -> dict:
         "edges": G.number_of_edges(),
         "density": float(nx.density(G)),
     }
+
+
+def load_dline_extension_stops(path: str | Path) -> pd.DataFrame:
+    p = Path(path)
+    if not p.exists():
+        return pd.DataFrame(columns=["node_id", "stop_id", "stop_name", "lon", "lat"])
+    df = pd.read_csv(p)
+    req = {"stop_id", "stop_name", "stop_lat", "stop_lon"}
+    if not req.issubset(set(df.columns)):
+        return pd.DataFrame(columns=["node_id", "stop_id", "stop_name", "lon", "lat"])
+    out = df.copy()
+    out["lon"] = pd.to_numeric(out["stop_lon"], errors="coerce")
+    out["lat"] = pd.to_numeric(out["stop_lat"], errors="coerce")
+    out = out.dropna(subset=["lon", "lat"]).copy()
+    b = config.LA_BBOX
+    out = out[
+        (out["lon"] >= b["min_lon"])
+        & (out["lon"] <= b["max_lon"])
+        & (out["lat"] >= b["min_lat"])
+        & (out["lat"] <= b["max_lat"])
+    ].copy()
+    out["stop_id"] = out["stop_id"].astype(str)
+    out["stop_name"] = out["stop_name"].astype(str)
+    out["node_id"] = "dline_ext::" + out["stop_id"]
+    return out[["node_id", "stop_id", "stop_name", "lon", "lat"]].reset_index(drop=True)
+
+
+def add_dline_extension_to_graph(
+    G: nx.Graph,
+    station_nodes: pd.DataFrame,
+    ext_stops: pd.DataFrame,
+    connect_max_m: float = 3500.0,
+) -> tuple[nx.Graph, pd.DataFrame, pd.DataFrame]:
+    if ext_stops is None or len(ext_stops) < 2:
+        return G.copy(), station_nodes.copy(), pd.DataFrame()
+    Gx = G.copy()
+    ext = ext_stops.reset_index(drop=True).copy()
+    for _, r in ext.iterrows():
+        Gx.add_node(r["node_id"])
+    edge_rows = []
+    for i in range(len(ext) - 1):
+        a = ext.iloc[i]
+        b = ext.iloc[i + 1]
+        w = float(_haversine_m(float(a["lon"]), float(a["lat"]), float(b["lon"]), float(b["lat"])))
+        Gx.add_edge(a["node_id"], b["node_id"], weight=w)
+        edge_rows.append(
+            {
+                "u": a["node_id"],
+                "v": b["node_id"],
+                "lon_u": float(a["lon"]),
+                "lat_u": float(a["lat"]),
+                "lon_v": float(b["lon"]),
+                "lat_v": float(b["lat"]),
+                "kind": "extension",
+            }
+        )
+    base = station_nodes[station_nodes["node_id"].isin(G.nodes)].copy()
+    if len(base) > 0:
+        terminals = [ext.iloc[0], ext.iloc[-1]]
+        used_anchors = set()
+        for t in terminals:
+            d = _haversine_m(base["lon"].values, base["lat"].values, float(t["lon"]), float(t["lat"]))
+            ix = int(np.argmin(d))
+            best_d = float(d[ix])
+            anchor = base.iloc[ix]
+            if best_d <= float(connect_max_m) and anchor["node_id"] not in used_anchors:
+                Gx.add_edge(str(t["node_id"]), str(anchor["node_id"]), weight=best_d)
+                used_anchors.add(anchor["node_id"])
+                edge_rows.append(
+                    {
+                        "u": str(t["node_id"]),
+                        "v": str(anchor["node_id"]),
+                        "lon_u": float(t["lon"]),
+                        "lat_u": float(t["lat"]),
+                        "lon_v": float(anchor["lon"]),
+                        "lat_v": float(anchor["lat"]),
+                        "kind": "anchor",
+                    }
+                )
+    ext_nodes = ext.rename(columns={"lon": "stop_lon", "lat": "stop_lat"})[
+        ["node_id", "stop_name", "stop_lon", "stop_lat"]
+    ].copy()
+    ext_nodes.rename(columns={"stop_lon": "lon", "stop_lat": "lat"}, inplace=True)
+    ext_nodes["feed"] = "project28_dline_extension"
+    nodes_out = pd.concat([station_nodes.copy(), ext_nodes], ignore_index=True).drop_duplicates("node_id")
+    edges_out = pd.DataFrame(edge_rows)
+    return Gx, nodes_out, edges_out
+
+
+def compare_effective_resistance(
+    G_before: nx.Graph,
+    G_after: nx.Graph,
+    focus_nodes: list[str],
+    max_pairs: int = 250,
+    seed: int = 42,
+) -> tuple[dict, pd.DataFrame]:
+    shared = [n for n in focus_nodes if n in G_before.nodes and n in G_after.nodes]
+    if len(shared) < 3:
+        return {}, pd.DataFrame()
+    all_pairs = list(combinations(shared, 2))
+    if len(all_pairs) > max_pairs:
+        rng = np.random.default_rng(seed)
+        take = rng.choice(len(all_pairs), size=max_pairs, replace=False)
+        pairs = [all_pairs[i] for i in take]
+    else:
+        pairs = all_pairs
+    _, ix0, _, Lp0 = laplacian_pinv_conductance(G_before)
+    _, ix1, _, Lp1 = laplacian_pinv_conductance(G_after)
+    rows = []
+    for a, b in pairs:
+        if a not in ix0 or b not in ix0 or a not in ix1 or b not in ix1:
+            continue
+        r0 = effective_resistance(ix0, Lp0, a, b)
+        r1 = effective_resistance(ix1, Lp1, a, b)
+        s0 = float(nx.shortest_path_length(G_before, source=a, target=b, weight="weight"))
+        s1 = float(nx.shortest_path_length(G_after, source=a, target=b, weight="weight"))
+        rows.append(
+            {
+                "station_a": a,
+                "station_b": b,
+                "r_eff_before": r0,
+                "r_eff_after": r1,
+                "r_eff_delta": r1 - r0,
+                "r_eff_pct_change": ((r1 - r0) / r0 * 100.0) if r0 > 0 else np.nan,
+                "sp_m_before": s0,
+                "sp_m_after": s1,
+                "sp_m_delta": s1 - s0,
+                "sp_m_pct_change": ((s1 - s0) / s0 * 100.0) if s0 > 0 else np.nan,
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return {}, df
+    summary = {
+        "pair_count": int(len(df)),
+        "mean_r_eff_before": float(df["r_eff_before"].mean()),
+        "mean_r_eff_after": float(df["r_eff_after"].mean()),
+        "mean_r_eff_pct_change": float(df["r_eff_pct_change"].mean()),
+        "median_r_eff_pct_change": float(df["r_eff_pct_change"].median()),
+        "mean_sp_km_before": float(df["sp_m_before"].mean() / 1000.0),
+        "mean_sp_km_after": float(df["sp_m_after"].mean() / 1000.0),
+        "mean_sp_pct_change": float(df["sp_m_pct_change"].mean()),
+    }
+    return summary, df.sort_values("r_eff_pct_change", ascending=True).reset_index(drop=True)
