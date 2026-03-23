@@ -1,42 +1,42 @@
 # LA Public Transit & Job Accessibility
 
-End-to-end analysis of **how many jobs are reachable within 30 minutes by transit + walking** across **Los Angeles County** census tracts, using **Metro GTFS** stops, **LEHD** jobs, and **ACS** population and income.
-
-**Outputs:** choropleth maps of accessibility and “transit deserts,” income vs. accessibility, a tract-level distribution, **Moran’s I** (spatial clustering of accessibility), and CSV summaries in `outputs/tables/`.
+Pipeline for **Los Angeles County**: tract **job accessibility** (30 min), **transit deserts**, **metro graph** with **demand** at stations, and **candidate corridors** scored as **demand × R_eff** (effective resistance from the Laplacian).
 
 ## Quick start
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Place in `data_raw/` (not committed):
-
-- Census tract shapefile `tl_*.shp` (and sidecars)
-- LEHD WAC file `*wac*.csv` or `.csv.gz`
-- ACS tract file `*acs*.csv`
-- GTFS: `metro_bus_gtfs.zip`, `metro_rail_gtfs.zip`
-
-Run:
+Data in `data_raw/`: tract shapefile `tl_*.shp`, LEHD WAC, ACS, GTFS zips.
 
 ```bash
 python scripts/run_la_analysis.py
 ```
 
-Figures are written to `outputs/figures/` (`01_`–`04_` prefixes). See `docs/METHODS.md` for assumptions.
+## Figures
 
-## Repository layout
+| File | Description |
+|------|-------------|
+| `01_accessibility_and_deserts.png` | Job access + desert tracts |
+| `02_income_vs_accessibility.png` | Income vs access |
+| `03_metro_network_demand.png` | Rail graph, demand-scaled nodes |
+| `04_corridor_candidates_map.png` | Dark basemap, numbered top corridors |
+| `05_corridor_impact_metrics.png` | Demand / R_eff / impact (normalized) |
+| `06_corridors_on_deserts.png` | Top 5 corridors over transit deserts (hatch) |
+| `07_corridor_results_table.png` | Report table: stop names, km, demand, R_eff, impact |
+
+**Tables:** `summary.csv`, `graph_summary.csv`, `corridor_priorities.csv`
+
+See `docs/METHODS.md`.
+
+## Layout
 
 ```
-src/config.py          # Paths and parameters
-src/la_analysis.py     # Load data, accessibility, Moran’s I, plots
-scripts/run_la_analysis.py
-notebooks/01_la_transit_accessibility.ipynb
-docs/METHODS.md
-outputs/figures/       # Key PNGs (tracked)
-outputs/tables/        # summary.csv, moran.txt (tracked)
+src/config.py  src/la_analysis.py  src/transport_graph.py  src/viz_la.py
+scripts/run_la_analysis.py  notebooks/01_la_transit_accessibility.ipynb
 ```
 
-This is a **planning sketch**, not a ridership forecast.
+Planning-oriented, not a ridership model.

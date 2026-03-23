@@ -1,2 +1,2 @@
-tracts,stops_used,total_jobs_in_model,mean_accessibility_jobs,median_accessibility_jobs,desert_tracts_pct,time_threshold_min,moran_I,moran_p
-2498,12164,4478164.0,290721.20696557243,186304.5,23.058446757405925,30,0.9085776364435806,0.01
+tracts,stops_used,total_jobs_in_model,mean_accessibility_jobs,median_accessibility_jobs,desert_tracts_pct,time_threshold_min,graph_nodes,graph_edges,accessibility_roughness_fLf,top_impact_score,top_corridor_km,top_effective_resistance
+2498,12164,4478164.0,290721.20696557243,186304.5,23.058446757405925,30,67,67,1065322091.5296787,8586741835690.665,14.146517065837717,16859.197641653915

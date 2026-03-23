@@ -1,22 +1,21 @@
 """
-LA County transit accessibility: GTFS stops, LEHD jobs, ACS population/income.
-Cumulative opportunity within a fixed travel-time budget; Moran’s I on tract accessibility.
+LA County: tract accessibility, deserts, metro graph, corridors via Laplacian effective resistance.
 """
 
 from __future__ import annotations
 
 import warnings
+
 import geopandas as gpd
-import gtfs_kit as gk
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 from scipy.spatial.distance import cdist
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-import config  # noqa: E402
+import config
+import transport_graph
+import viz_la
 
 
 def _load_tracts() -> gpd.GeoDataFrame:
@@ -66,25 +65,6 @@ def _load_acs() -> pd.DataFrame:
         )
     acs["GEOID"] = acs["GEOID"].astype(str).str.zfill(11)
     return acs[["GEOID", "pop_total", "median_income"]].drop_duplicates("GEOID")
-
-
-def load_gtfs_stops() -> gpd.GeoDataFrame:
-    feeds = []
-    for z in sorted(config.DATA_RAW.glob("*gtfs*.zip")):
-        feeds.append(gk.read_feed(z, dist_units="km"))
-    if not feeds:
-        raise FileNotFoundError("Add metro_bus_gtfs.zip and metro_rail_gtfs.zip to data_raw/")
-    parts = []
-    for f in feeds:
-        if f.stops is not None and len(f.stops) > 0:
-            parts.append(f.stops)
-    stops = pd.concat([p for p in parts if p is not None and len(p) > 0], ignore_index=True)
-    gdf = gpd.GeoDataFrame(
-        stops,
-        geometry=gpd.points_from_xy(stops["stop_lon"], stops["stop_lat"], crs=config.GEO_CRS),
-    )
-    b = config.LA_BBOX
-    return gdf.cx[b["min_lon"] : b["max_lon"], b["min_lat"] : b["max_lat"]]
 
 
 def haversine_m(lon1, lat1, lon2, lat2):
@@ -144,30 +124,12 @@ def compute_accessibility(tracts: gpd.GeoDataFrame, stops: gpd.GeoDataFrame) -> 
     return out
 
 
-def morans_i(gdf: gpd.GeoDataFrame, col: str = "accessibility_jobs"):
-    try:
-        from esda.moran import Moran
-        from libpysal.weights import Queen
-    except ImportError:
-        return None
-
-    gdf = gdf.copy()
-    gdf.geometry = gdf.geometry.buffer(0)
-    y = gdf[col].astype(float).values
-    if np.any(~np.isfinite(y)):
-        y = np.where(np.isfinite(y), y, np.nanmedian(y))
-
-    w = Queen.from_dataframe(gdf, use_index=False)
-    if w.n == 0:
-        return None
-    mi = Moran(y, w, permutations=99)
-    return {"I": float(mi.I), "p_sim": float(mi.p_sim), "z_score": float(mi.z_norm)}
-
-
 def run_pipeline():
     config.DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
     config.FIGURES.mkdir(parents=True, exist_ok=True)
     config.TABLES.mkdir(parents=True, exist_ok=True)
+
+    viz_la.setup_style()
 
     tracts = _load_tracts()
     jobs = _load_jobs()
@@ -176,15 +138,12 @@ def run_pipeline():
     tracts = tracts.merge(acs, on="GEOID", how="left")
     tracts["jobs_total"] = tracts["jobs_total"].fillna(0)
 
-    stops = load_gtfs_stops()
+    stops = transport_graph.load_gtfs_stops_fast()
     gdf = compute_accessibility(tracts, stops)
-
-    moran = morans_i(gdf)
 
     out_geo = config.DATA_PROCESSED / "la_tract_accessibility.geojson"
     gdf.to_file(out_geo, driver="GeoJSON")
-    pq = config.DATA_PROCESSED / "la_tract_accessibility.parquet"
-    gdf.to_parquet(pq)
+    gdf.to_parquet(config.DATA_PROCESSED / "la_tract_accessibility.parquet")
 
     summary = {
         "tracts": len(gdf),
@@ -195,100 +154,53 @@ def run_pipeline():
         "desert_tracts_pct": float(gdf["transit_desert"].mean() * 100),
         "time_threshold_min": config.TIME_THRESHOLD_MIN,
     }
-    if moran:
-        summary["moran_I"] = moran["I"]
-        summary["moran_p"] = moran["p_sim"]
+
+    viz_la.figure_accessibility_deserts(gdf, config.FIGURES / "01_accessibility_and_deserts.png")
+    viz_la.figure_income_access(gdf, config.FIGURES / "02_income_vs_accessibility.png")
+
+    feeds = transport_graph.load_feeds()
+    G, station_nodes = transport_graph.build_line_graph(feeds, route_types=set(config.GRAPH_ROUTE_TYPES))
+    station_nodes = station_nodes[station_nodes["node_id"].isin(G.nodes)].copy()
+
+    gstats = transport_graph.summarize_graph(G)
+    summary["graph_nodes"] = gstats["nodes"]
+    summary["graph_edges"] = gstats["edges"]
+
+    nodes, _, L, _ = transport_graph.laplacian_pinv_conductance(G)
+    stations_w = transport_graph.station_buffer_weights(gdf, station_nodes, buffer_m=config.STATION_BUFFER_M)
+    stations_w = stations_w[stations_w["node_id"].isin(G.nodes)].copy()
+    st_ix = stations_w.set_index("node_id")
+    f = np.array([float(st_ix["mean_tract_accessibility"].get(n, np.nan)) for n in nodes])
+    med = float(np.nanmedian(f[np.isfinite(f)])) if np.any(np.isfinite(f)) else 0.0
+    f = np.where(np.isfinite(f), f, med)
+    summary["accessibility_roughness_fLf"] = transport_graph.accessibility_roughness(L, f)
+
+    pd.DataFrame([gstats]).to_csv(config.TABLES / "graph_summary.csv", index=False)
+
+    viz_la.figure_metro_network(G, stations_w, config.FIGURES / "03_metro_network_demand.png")
+
+    cors = transport_graph.corridor_graph_impact_scores(
+        G,
+        gdf,
+        stations_w,
+        top_k=config.CORRIDOR_TOP_STATIONS,
+        max_pairs=config.CORRIDOR_RANDOM_PAIRS,
+        max_eucl_m=float(config.CORRIDOR_MAX_EUCL_KM) * 1000.0,
+        buffer_m=config.CORRIDOR_BUFFER_M,
+    )
+    if len(cors) > 0:
+        cors.to_csv(config.TABLES / "corridor_priorities.csv", index=False)
+        summary["top_impact_score"] = float(cors.iloc[0]["impact_score"])
+        summary["top_corridor_km"] = float(cors.iloc[0]["euclidean_km"])
+        summary["top_effective_resistance"] = float(cors.iloc[0]["effective_resistance"])
+        viz_la.figure_corridor_map(gdf, G, stations_w, cors, config.FIGURES / "04_corridor_candidates_map.png")
+        viz_la.figure_corridor_metrics(cors, config.FIGURES / "05_corridor_impact_metrics.png")
+        viz_la.figure_corridors_on_deserts(gdf, cors, config.FIGURES / "06_corridors_on_deserts.png")
+        viz_la.figure_corridor_results_table(cors, station_nodes, config.FIGURES / "07_corridor_results_table.png")
+
     pd.DataFrame([summary]).to_csv(config.TABLES / "summary.csv", index=False)
 
-    _plot_maps(gdf)
-    _plot_distribution(gdf)
-    _plot_income(gdf)
-    if moran:
-        with open(config.TABLES / "moran.txt", "w") as f:
-            f.write(f"Moran's I = {moran['I']:.4f}\np-value (sim) = {moran['p_sim']:.4f}\n")
-
-    return gdf, moran, summary
-
-
-def _la_extent(ax):
-    b = config.LA_BBOX
-    ax.set_xlim(b["min_lon"], b["max_lon"])
-    ax.set_ylim(b["min_lat"], b["max_lat"])
-
-
-def _plot_maps(gdf: gpd.GeoDataFrame):
-    g = gdf.to_crs(config.GEO_CRS)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    vmin, vmax = 0, np.nanpercentile(g["accessibility_jobs"], 98)
-    g.plot(
-        column="accessibility_jobs",
-        ax=axes[0],
-        legend=True,
-        cmap="viridis",
-        vmin=vmin,
-        vmax=vmax,
-        legend_kwds={"label": "Jobs reachable (30 min)"},
-    )
-    axes[0].set_title("Job accessibility via transit (30 min)")
-    axes[0].axis("off")
-    _la_extent(axes[0])
-
-    g.plot(
-        column="transit_desert",
-        ax=axes[1],
-        categorical=True,
-        cmap="OrRd",
-        legend=True,
-        legend_kwds={"title": "Transit desert"},
-    )
-    axes[1].set_title(f"Transit desert (bottom {config.DESERT_PERCENTILE}%)")
-    axes[1].axis("off")
-    _la_extent(axes[1])
-
-    plt.tight_layout()
-    plt.savefig(config.FIGURES / "01_accessibility_and_deserts.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    g.plot(column="accessibility_jobs", ax=ax, legend=True, cmap="magma", vmin=vmin, vmax=vmax)
-    ax.set_title("Jobs reachable within 30 minutes (tract level)")
-    ax.axis("off")
-    _la_extent(ax)
-    plt.tight_layout()
-    plt.savefig(config.FIGURES / "02_accessibility_choropleth.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-
-def _plot_distribution(gdf: gpd.GeoDataFrame):
-    fig, ax = plt.subplots(figsize=(8, 5))
-    x = gdf["accessibility_jobs"].replace([np.inf, -np.inf], np.nan).dropna()
-    sns.histplot(x / 1000.0, bins=50, kde=True, ax=ax, color="steelblue")
-    ax.set_xlabel("Jobs reachable within 30 min (thousands)")
-    ax.set_ylabel("Number of tracts")
-    ax.set_title("Distribution of tract job accessibility")
-    plt.tight_layout()
-    plt.savefig(config.FIGURES / "03_accessibility_distribution.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-
-def _plot_income(gdf: gpd.GeoDataFrame):
-    sub = gdf.dropna(subset=["median_income", "accessibility_jobs"]).copy()
-    if len(sub) < 10:
-        return
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(
-        sub["median_income"] / 1000.0,
-        sub["accessibility_jobs"] / 1000.0,
-        alpha=0.35,
-        s=12,
-        c="darkslateblue",
-    )
-    ax.set_xlabel("Median household income ($1000s)")
-    ax.set_ylabel("Jobs reachable in 30 min (thousands)")
-    ax.set_title("Income vs transit accessibility to jobs")
-    plt.tight_layout()
-    plt.savefig(config.FIGURES / "04_income_vs_accessibility.png", dpi=200, bbox_inches="tight")
-    plt.close()
+    return gdf, summary
 
 
 if __name__ == "__main__":

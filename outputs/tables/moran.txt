@@ -1,2 +1,0 @@
-Moran's I = 0.9086
-p-value (sim) = 0.0100

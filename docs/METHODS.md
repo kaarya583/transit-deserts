@@ -1,17 +1,25 @@
-# Methods (short)
+# Methods
 
 **Area:** Los Angeles County census tracts.
 
-**Transit:** Metro bus + rail stops from GTFS (`data_raw/*.zip`).
+**Accessibility:** Nearest GTFS stop to tract centroid; simplified walk–transit–walk time to job tracts; jobs reachable in **≤ 30 min**. **Transit desert** = bottom **20%** of tract accessibility.
 
-**Jobs:** LEHD Workplace Area Characteristics (`C000`) aggregated to tracts.
+**Metro graph:** GTFS rail modes (0–2), edges = track segments + **transfers**. Edge length = great-circle meters. **Conductance** \(c_{ij} = 1/(d_{ij}+1)\). **Weighted Laplacian** \(L = D - A\). **Pseudoinverse** \(L^+\) via NumPy `pinv`.
 
-**People / income:** ACS tract tables (population, median household income).
+**Effective resistance** between stations \(a,b\):  
+\(R_{\mathrm{eff}}(a,b) = L^+_{aa} + L^+_{bb} - 2L^+_{ab}\).  
+Higher \(R_{\mathrm{eff}}\) means the pair is **more weakly connected** on today’s network (fewer parallel paths).
 
-**Accessibility:** For each tract home location, nearest stop is found; travel time to each tract with jobs uses walk–transit–walk legs with fixed speeds and a 5-minute wait. Jobs reachable in **≤ 30 minutes** are summed (cumulative opportunity).
+**Station demand:** Within **800 m**, \(\sqrt{\text{pop}\times\text{jobs}}\). Mean tract accessibility near each station is used only for **roughness** \(f^\top L f\) in the summary.
 
-**Transit deserts:** Tracts in the **bottom 20%** of job accessibility.
+**Corridor impact score (simple):**  
+\(\textbf{impact} = \text{demand}_a \times \text{demand}_b \times R_{\mathrm{eff}}(a,b)\).
 
-**Spatial clustering:** **Moran’s I** (Queen contiguity) on tract accessibility — tests whether high- or low-accessibility tracts cluster in space.
+- **Demand** = activity at both endpoints (product of the two station demand weights).  
+- **\(R_{\mathrm{eff}}\)** = graph statistic from the Laplacian (same for every pair).  
 
-This is a planning-oriented sketch, not a ridership model.
+Buffer tract stats (mean accessibility, % deserts) are still saved in the CSV for context but **not** multiplied into the score.
+
+**Outputs:** `corridor_priorities.csv`; figures `01`–`07` (including desert overlay + results table for top corridors).
+
+Planning analysis, not engineering design or ridership forecasting.
