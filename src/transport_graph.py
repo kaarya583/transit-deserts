@@ -555,3 +555,62 @@ def compare_effective_resistance(
         "mean_sp_pct_change": float(df["sp_m_pct_change"].mean()),
     }
     return summary, df.sort_values("r_eff_pct_change", ascending=True).reset_index(drop=True)
+
+
+def compare_extension_reach_gain(
+    G_base: nx.Graph,
+    G_after: nx.Graph,
+    station_nodes_base: pd.DataFrame,
+    ext_stops: pd.DataFrame,
+    focus_nodes: list[str],
+    baseline_offnetwork_penalty_m: float = 8000.0,
+) -> tuple[dict, pd.DataFrame]:
+    if ext_stops is None or len(ext_stops) == 0:
+        return {}, pd.DataFrame()
+    base_nodes = station_nodes_base[station_nodes_base["node_id"].isin(G_base.nodes)].copy()
+    if len(base_nodes) == 0:
+        return {}, pd.DataFrame()
+    ext = ext_stops.copy()
+    ext_ids = ext["node_id"].astype(str).tolist()
+    G_virtual = G_base.copy()
+    for _, e in ext.iterrows():
+        e_id = str(e["node_id"])
+        d = _haversine_m(base_nodes["lon"].values, base_nodes["lat"].values, float(e["lon"]), float(e["lat"]))
+        ix = int(np.argmin(d))
+        anchor = str(base_nodes.iloc[ix]["node_id"])
+        G_virtual.add_node(e_id)
+        G_virtual.add_edge(e_id, anchor, weight=float(d[ix]) + float(baseline_offnetwork_penalty_m))
+    rows = []
+    for n in focus_nodes:
+        if n not in G_base.nodes or n not in G_after.nodes:
+            continue
+        b_vals = []
+        a_vals = []
+        for e_id in ext_ids:
+            if e_id not in G_virtual.nodes or e_id not in G_after.nodes:
+                continue
+            b_vals.append(float(nx.shortest_path_length(G_virtual, source=n, target=e_id, weight="weight")))
+            a_vals.append(float(nx.shortest_path_length(G_after, source=n, target=e_id, weight="weight")))
+        if not b_vals or not a_vals:
+            continue
+        b_mean = float(np.mean(b_vals))
+        a_mean = float(np.mean(a_vals))
+        rows.append(
+            {
+                "node_id": str(n),
+                "mean_sp_to_ext_km_before": b_mean / 1000.0,
+                "mean_sp_to_ext_km_after": a_mean / 1000.0,
+                "delta_km": (a_mean - b_mean) / 1000.0,
+                "pct_change": ((a_mean - b_mean) / b_mean * 100.0) if b_mean > 0 else np.nan,
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return {}, df
+    summary = {
+        "station_count": int(len(df)),
+        "mean_reach_delta_km": float(df["delta_km"].mean()),
+        "median_reach_delta_km": float(df["delta_km"].median()),
+        "mean_reach_pct_change": float(df["pct_change"].mean()),
+    }
+    return summary, df.sort_values("delta_km", ascending=True).reset_index(drop=True)

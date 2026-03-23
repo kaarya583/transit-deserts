@@ -260,6 +260,34 @@ def run_pipeline():
                 config.FIGURES / "09_dline_extension_top_pair_gains.png",
                 top_n=int(getattr(config, "DLINE_TOP_PAIR_BARS", 10)),
             )
+            focus_reach = (
+                stations_w[stations_w["node_id"].isin(G.nodes)]
+                .nlargest(int(getattr(config, "DLINE_REACH_FOCUS_TOP_STATIONS", 45)), "weight")["node_id"]
+                .tolist()
+            )
+            reach_sum, reach_df = transport_graph.compare_extension_reach_gain(
+                G,
+                G_d,
+                station_nodes[station_nodes["node_id"].isin(G.nodes)].copy(),
+                ext,
+                focus_nodes=focus_reach,
+                baseline_offnetwork_penalty_m=float(getattr(config, "DLINE_BASELINE_OFFNETWORK_PENALTY_M", 8000.0)),
+            )
+            if len(reach_df) > 0:
+                reach_df.to_csv(config.TABLES / "dline_extension_reach_gain.csv", index=False)
+            if reach_sum:
+                summary["dline_reach_station_count"] = reach_sum["station_count"]
+                summary["dline_mean_reach_gain_km"] = -reach_sum["mean_reach_delta_km"]
+                summary["dline_median_reach_gain_km"] = -reach_sum["median_reach_delta_km"]
+                summary["dline_mean_reach_gain_pct"] = -reach_sum["mean_reach_pct_change"]
+            viz_la.figure_dline_reach_gain_report(
+                reach_df,
+                station_nodes_d[station_nodes_d["node_id"].isin(G_d.nodes)].copy(),
+                ext_edges,
+                reach_sum,
+                config.FIGURES / "10_dline_extension_reach_gain_report.png",
+                top_n=12,
+            )
 
     pd.DataFrame([summary]).to_csv(config.TABLES / "summary.csv", index=False)
 

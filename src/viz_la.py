@@ -568,3 +568,88 @@ def figure_dline_top_pair_gains(pair_df: pd.DataFrame, station_nodes: pd.DataFra
     plt.tight_layout()
     plt.savefig(path, facecolor="white")
     plt.close()
+
+
+def figure_dline_reach_gain_report(
+    reach_df: pd.DataFrame,
+    station_nodes: pd.DataFrame,
+    ext_edges: pd.DataFrame,
+    reach_summary: dict,
+    path,
+    top_n: int = 12,
+):
+    if reach_df is None or len(reach_df) == 0:
+        return
+    setup_style()
+    nodes = station_nodes.copy()
+    nodes = nodes[nodes["node_id"].isin(reach_df["node_id"])].copy()
+    merged = nodes.merge(reach_df, on="node_id", how="inner")
+    fig, axes = plt.subplots(1, 2, figsize=(16.2, 8.0), gridspec_kw={"width_ratios": [1.15, 1.0], "wspace": 0.12})
+    axm, axb = axes
+    axm.set_facecolor("#f8fafc")
+    _extent(axm)
+    axm.axis("off")
+    pos = nodes.set_index("node_id")[["lon", "lat"]].to_dict("index")
+    for _, r in ext_edges.iterrows():
+        c = "#be123c" if str(r.get("kind", "")) == "extension" else "#f97316"
+        lw = 4.0 if str(r.get("kind", "")) == "extension" else 2.1
+        axm.plot(
+            [float(r["lon_u"]), float(r["lon_v"])],
+            [float(r["lat_u"]), float(r["lat_v"])],
+            color=c,
+            linewidth=lw,
+            alpha=0.95,
+            zorder=4,
+            solid_capstyle="round",
+        )
+    gain = -merged["delta_km"].values.astype(float)
+    gain_span = float(np.nanmax(gain) - np.nanmin(gain)) if len(gain) else 0.0
+    size = 26 + 320 * (gain - np.nanmin(gain)) / max(gain_span, 1e-9)
+    sc = axm.scatter(
+        merged["lon"].values,
+        merged["lat"].values,
+        s=size,
+        c=gain,
+        cmap="YlOrRd",
+        edgecolors="#334155",
+        linewidths=0.45,
+        alpha=0.9,
+        zorder=5,
+    )
+    cb = plt.colorbar(sc, ax=axm, shrink=0.72, pad=0.015)
+    cb.set_label("Mean network reach gain to D Line stations (km)")
+    axm.set_title("Spatial footprint of D Line reach gains", fontsize=12, fontweight="600")
+    top = reach_df.nsmallest(top_n, "delta_km").copy().reset_index(drop=True)
+    name_by = station_nodes.set_index("node_id")["stop_name"].to_dict()
+    labels = [_stop_display_name(str(n), name_by, max_len=24) for n in top["node_id"]]
+    y = np.arange(len(top))[::-1]
+    vals = -top["delta_km"].values.astype(float)
+    axb.barh(y, vals, color="#be123c", edgecolor="white", linewidth=0.7, alpha=0.92)
+    axb.set_yticks(y)
+    axb.set_yticklabels(labels, fontsize=9)
+    axb.set_xlabel("Reduction in mean shortest-path distance to extension stations (km)")
+    axb.set_title(f"Top {top_n} stations with largest gains", fontsize=12, fontweight="600")
+    axb.grid(True, axis="x", alpha=0.3, linestyle="--", linewidth=0.6)
+    axb.spines["top"].set_visible(False)
+    axb.spines["right"].set_visible(False)
+    if reach_summary:
+        txt = (
+            f"Stations compared: {reach_summary.get('station_count', 0)}\n"
+            f"Mean gain: {-reach_summary.get('mean_reach_delta_km', np.nan):.2f} km\n"
+            f"Median gain: {-reach_summary.get('median_reach_delta_km', np.nan):.2f} km\n"
+            f"Mean % change: {-reach_summary.get('mean_reach_pct_change', np.nan):.1f}%"
+        )
+        axb.text(
+            0.98,
+            0.03,
+            txt,
+            transform=axb.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=9.5,
+            bbox=dict(facecolor="white", edgecolor="#cbd5e1", alpha=0.98, boxstyle="round,pad=0.45"),
+        )
+    fig.suptitle("Project 28 D Line extension impact: network reach improvement", fontsize=14, fontweight="700", y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.savefig(path, facecolor="white")
+    plt.close()

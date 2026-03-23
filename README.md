@@ -29,8 +29,9 @@ python scripts/run_la_analysis.py
 | `07_corridor_results_table.png` | Report table: stop names, km, demand, R_eff, impact |
 | `08_dline_extension_network_impact.png` | Baseline vs extension graph with headline network impacts |
 | `09_dline_extension_top_pair_gains.png` | OD pairs with largest effective resistance reduction |
+| `10_dline_extension_reach_gain_report.png` | Composite map + bars of reach gain to new D Line stations |
 
-**Tables:** `summary.csv`, `graph_summary.csv`, `corridor_priorities.csv`, `dline_extension_pair_impacts.csv`, `dline_extension_top_gains.csv`
+**Tables:** `summary.csv`, `graph_summary.csv`, `corridor_priorities.csv`, `dline_extension_pair_impacts.csv`, `dline_extension_top_gains.csv`, `dline_extension_reach_gain.csv`
 
 See `docs/METHODS.md`.
 
