@@ -653,3 +653,134 @@ def figure_dline_reach_gain_report(
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     plt.savefig(path, facecolor="white")
     plt.close()
+
+
+def figure_dline_accessibility_impact(
+    g_before: gpd.GeoDataFrame,
+    g_after: gpd.GeoDataFrame,
+    ext_stops: pd.DataFrame,
+    path,
+):
+    if g_before is None or g_after is None or len(g_before) == 0 or len(g_after) == 0:
+        return
+    setup_style()
+    b = g_before[["GEOID", "accessibility_jobs", "pop_total", "transit_desert", "geometry"]].copy()
+    a = g_after[["GEOID", "accessibility_jobs"]].copy()
+    df = b.merge(a, on="GEOID", suffixes=("_before", "_after"), how="inner")
+    if len(df) == 0:
+        return
+    df["gain_jobs"] = df["accessibility_jobs_after"].astype(float) - df["accessibility_jobs_before"].astype(float)
+    df["gain_pct"] = np.where(
+        df["accessibility_jobs_before"].astype(float) > 0,
+        (df["gain_jobs"] / df["accessibility_jobs_before"].astype(float)) * 100.0,
+        np.nan,
+    )
+    g = gpd.GeoDataFrame(df, geometry="geometry", crs=g_before.crs).to_crs(config.GEO_CRS)
+    fig, axes = plt.subplots(1, 2, figsize=(15.8, 8.1), gridspec_kw={"wspace": 0.1})
+    axm, axs = axes
+    if ext_stops is not None and len(ext_stops) > 0:
+        min_lon = float(ext_stops["lon"].min()) - 0.12
+        max_lon = float(ext_stops["lon"].max()) + 0.12
+        min_lat = float(ext_stops["lat"].min()) - 0.08
+        max_lat = float(ext_stops["lat"].max()) + 0.08
+    else:
+        b = config.LA_BBOX
+        min_lon, max_lon, min_lat, max_lat = b["min_lon"], b["max_lon"], b["min_lat"], b["max_lat"]
+    local = g[
+        (g.geometry.centroid.x >= min_lon)
+        & (g.geometry.centroid.x <= max_lon)
+        & (g.geometry.centroid.y >= min_lat)
+        & (g.geometry.centroid.y <= max_lat)
+    ].copy()
+    improved = local[local["gain_jobs"] > 0].copy()
+    local.plot(
+        ax=axm,
+        color="#e2e8f0",
+        linewidth=0.2,
+        edgecolor="white",
+    )
+    if len(improved) > 0:
+        vmax = float(np.nanpercentile(improved["gain_jobs"], 95))
+        vmax = max(vmax, 1.0)
+        improved.plot(
+            ax=axm,
+            column="gain_jobs",
+            cmap="YlOrRd",
+            vmin=0,
+            vmax=vmax,
+            linewidth=0.25,
+            edgecolor="white",
+            legend=True,
+            legend_kwds={"label": "Increase in jobs reachable within 30 min", "shrink": 0.72},
+        )
+    if ext_stops is not None and len(ext_stops) > 1:
+        sx = ext_stops.sort_values("stop_id")
+        axm.plot(
+            sx["lon"].values,
+            sx["lat"].values,
+            color="#be123c",
+            linewidth=3.5,
+            zorder=6,
+            solid_capstyle="round",
+        )
+        axm.scatter(sx["lon"].values, sx["lat"].values, s=48, color="white", edgecolors="#be123c", linewidths=1.4, zorder=7)
+    axm.set_xlim(min_lon, max_lon)
+    axm.set_ylim(min_lat, max_lat)
+    axm.set_aspect("equal")
+    axm.set_title("Local impact near D Line extension corridor", fontsize=12, fontweight="600")
+    axm.axis("off")
+    grp = (
+        df.assign(group=np.where(df["transit_desert"].astype(bool), "Transit desert tracts", "Other tracts"))
+        .groupby("group", as_index=False)
+        .agg(
+            mean_gain_jobs=("gain_jobs", "mean"),
+            median_gain_jobs=("gain_jobs", "median"),
+            tract_improve_share=("gain_jobs", lambda s: float((s > 0).mean() * 100.0)),
+            pop_total=("pop_total", "sum"),
+            pop_improved=("gain_jobs", lambda s: float(df.loc[s.index, "pop_total"][s > 0].sum())),
+        )
+    )
+    grp["pop_improve_share"] = np.where(grp["pop_total"] > 0, grp["pop_improved"] / grp["pop_total"] * 100.0, np.nan)
+    order = ["Transit desert tracts", "Other tracts"]
+    grp["rank"] = grp["group"].map({g: i for i, g in enumerate(order)})
+    grp = grp.sort_values("rank")
+    y = np.arange(len(grp))[::-1]
+    bars = axs.barh(y, grp["mean_gain_jobs"].values, color=["#be123c", "#0ea5e9"], alpha=0.9, edgecolor="white")
+    axs.set_yticks(y)
+    axs.set_yticklabels(grp["group"].tolist(), fontsize=10)
+    axs.set_xlabel("Mean increase in jobs reachable (30 min)")
+    axs.set_title("Average benefit by tract type", fontsize=12, fontweight="600")
+    axs.grid(True, axis="x", alpha=0.3, linestyle="--", linewidth=0.6)
+    axs.spines["top"].set_visible(False)
+    axs.spines["right"].set_visible(False)
+    for i, (_, r) in enumerate(grp.iterrows()):
+        txt = (
+            f"Median +{r['median_gain_jobs']:.0f} jobs\n"
+            f"{r['tract_improve_share']:.1f}% tracts improved\n"
+            f"{r['pop_improve_share']:.1f}% population improved"
+        )
+        axs.text(
+            max(float(r["mean_gain_jobs"]), 0) + 0.01 * max(1.0, float(np.nanmax(grp["mean_gain_jobs"]))),
+            y[i],
+            txt,
+            va="center",
+            ha="left",
+            fontsize=8.8,
+        )
+    overall_tract_share = float((df["gain_jobs"] > 0).mean() * 100.0)
+    overall_pop = float(df["pop_total"].fillna(0).sum())
+    overall_pop_share = float(
+        (df.loc[df["gain_jobs"] > 0, "pop_total"].fillna(0).sum() / overall_pop * 100.0) if overall_pop > 0 else np.nan
+    )
+    fig.suptitle("Project 28 D Line extension impact: tangible accessibility change", fontsize=14, fontweight="700", y=0.98)
+    axs.text(
+        0.02,
+        0.03,
+        f"Overall: {overall_tract_share:.1f}% of tracts and {overall_pop_share:.1f}% of population show accessibility gains.",
+        transform=axs.transAxes,
+        fontsize=9.2,
+        bbox=dict(facecolor="white", edgecolor="#cbd5e1", alpha=0.97, boxstyle="round,pad=0.4"),
+    )
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.savefig(path, facecolor="white")
+    plt.close()

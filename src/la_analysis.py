@@ -213,6 +213,37 @@ def run_pipeline():
     if dline_csv is not None:
         ext = transport_graph.load_dline_extension_stops(dline_csv)
         if len(ext) >= 2:
+            ext_stops_gdf = gpd.GeoDataFrame(
+                ext,
+                geometry=gpd.points_from_xy(ext["lon"], ext["lat"], crs=config.GEO_CRS),
+            )
+            stops_plus = pd.concat([stops.to_crs(config.GEO_CRS), ext_stops_gdf], ignore_index=True)
+            gdf_dline = compute_accessibility(tracts, stops_plus)
+            dacc = gdf[["GEOID", "accessibility_jobs", "pop_total", "transit_desert"]].merge(
+                gdf_dline[["GEOID", "accessibility_jobs"]],
+                on="GEOID",
+                suffixes=("_before", "_after"),
+                how="inner",
+            )
+            dacc["gain_jobs"] = dacc["accessibility_jobs_after"].astype(float) - dacc["accessibility_jobs_before"].astype(float)
+            dacc["gain_pct"] = np.where(
+                dacc["accessibility_jobs_before"].astype(float) > 0,
+                (dacc["gain_jobs"] / dacc["accessibility_jobs_before"].astype(float)) * 100.0,
+                np.nan,
+            )
+            dacc.to_csv(config.TABLES / "dline_accessibility_impact.csv", index=False)
+            summary["dline_access_mean_gain_jobs"] = float(dacc["gain_jobs"].mean())
+            summary["dline_access_median_gain_jobs"] = float(dacc["gain_jobs"].median())
+            summary["dline_access_tracts_improved_pct"] = float((dacc["gain_jobs"] > 0).mean() * 100.0)
+            pop_all = float(dacc["pop_total"].fillna(0).sum())
+            pop_imp = float(dacc.loc[dacc["gain_jobs"] > 0, "pop_total"].fillna(0).sum())
+            summary["dline_access_population_improved_pct"] = float(pop_imp / pop_all * 100.0) if pop_all > 0 else np.nan
+            viz_la.figure_dline_accessibility_impact(
+                gdf,
+                gdf_dline,
+                ext,
+                config.FIGURES / "11_dline_accessibility_impact.png",
+            )
             G_d, station_nodes_d, ext_edges = transport_graph.add_dline_extension_to_graph(
                 G,
                 station_nodes,
